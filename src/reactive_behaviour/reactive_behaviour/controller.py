@@ -11,7 +11,7 @@ class VelocityController(DrivingSwarmNode):
         super().__init__(name)
         
         self.publisher = self.create_publisher(Twist, 'cmd_vel', 10)
-        self.forward_distance = 0
+        self.forward_distance = 0.0
         self.create_subscription(LaserScan, 'scan', self.laser_cb, rclpy.qos.qos_profile_sensor_data)
         self.create_timer(0.1, self.timer_cb)
         self.setup_command_interface()
@@ -20,14 +20,25 @@ class VelocityController(DrivingSwarmNode):
         if not self.started:
             return
         msg = Twist()
-        x = self.forward_distance - 0.3
-        x = x if x < 0.1 else 0.1
-        x = x if x >= 0 else 0.0
-        msg.linear.x = x
+
+        distance = self.forward_distance - 0.3
+
+        if (distance > 0.3):
+            msg.linear.x = 0.075
+        else:
+            msg.angular.z = 0.1
+
         self.publisher.publish(msg)
     
     def laser_cb(self, msg):
-        self.forward_distance = msg.ranges[0]
+        forward_distance = msg.ranges[0]
+
+        num_ranges = 31
+        for i in range(num_ranges):
+            j = i - (num_ranges // 2)
+            forward_distance = min(forward_distance, msg.ranges[j])
+        
+        self.forward_distance = forward_distance
 
 
 
