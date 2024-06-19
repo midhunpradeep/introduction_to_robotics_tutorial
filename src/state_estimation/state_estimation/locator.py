@@ -16,7 +16,8 @@ class LocatorNode(Node):
         self.initialized = False
         self.create_timer(1.0, self.timer_cb)
         self.get_logger().info('locator node started')
-        
+        self.position_estimate = np.array([0.0, 0.0, 0.0])
+
     def range_cb(self, msg):
         self.anchor_ranges.append(msg)
         self.anchor_ranges = self.anchor_ranges[-10:]
@@ -29,16 +30,31 @@ class LocatorNode(Node):
             return
         msg = PointStamped()
         msg.point.x, msg.point.y, msg.point.z = self.calculate_position()
+        
         msg.header.frame_id = 'world'
         self.position_pub.publish(msg)
+
+    def _calculate_residual_element(self, range: Range) -> float:
+        a = np.array([range.anchor.x, range.anchor.y, range.anchor.z])
+        return range.range - np.linalg.norm(self.position_estimate - a)
+
+    def _calculate_residual_gradient_element(self, range: Range) -> float:
+        a = np.array([range.anchor.x, range.anchor.y, range.anchor.z])
+        return -(self.position_estimate - a) / np.linalg.norm(self.position_estimate - a)
     
     def calculate_position(self):
         if not len(self.anchor_ranges):
-            return 0.0, 0.0, 0.0
+            return self.position_estimate
         
-        # YOUR CODE GOES HERE:
-        x = np.mean([r.range for r in self.anchor_ranges]) - 0.5
-        return x, 0.0, 0.0
+        residual = np.array([self._calculate_residual_element(range) for range in self.anchor_ranges])
+
+        residual_gradient = np.array([self._calculate_residual_gradient_element(range) for range in self.anchor_ranges])
+        
+        self.position_estimate = self.position_estimate - np.linalg.pinv(residual_gradient) @ residual
+        
+        position = self.position_estimate[0], self.position_estimate[1], self.position_estimate[2]
+        # self.get_logger().info(f'position = {position}')
+        return position
 
 
 def main(args=None):

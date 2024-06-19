@@ -1,3 +1,5 @@
+import math
+
 import rclpy
 from rclpy.node import Node
 
@@ -13,22 +15,67 @@ class VelocityController(Node):
         self.forward_distance = 0
         self.goal = None
         self.position = None
+        self.previous_position = None
         self.create_subscription(LaserScan, 'scan', self.laser_cb, rclpy.qos.qos_profile_sensor_data)
         self.create_subscription(PoseStamped, 'nav/goal', self.goal_cb, 10)
         self.create_subscription(PointStamped, 'position', self.position_cb, 10)
         self.pose_publisher = self.create_publisher(PoseStamped, 'pose_marker', 10)
         self.create_timer(0.1, self.timer_cb)
         self.get_logger().info('controller node started')
+    
+    @staticmethod
+    def _calculate_distance(point1, point2):
+        x1, y1 = point1
+        x2, y2 = point2
+        distance = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        return distance
+    
+    @staticmethod
+    def _calculate_angle(point1, point2):
+        angle = 90 - math.degrees(math.atan2(
+                point2[1] - point1[1], 
+                point2[0] - point1[0]
+            ))
+        if (angle < 0):
+            angle += 360
+        return angle
         
     def timer_cb(self):
+        if not self.position or not self.goal:
+            return
+        
+        self.get_logger().info(f"posttion = {self.position}, goal = {self.goal}")
+    
+        if not self.previous_position:
+            self.previous_position = self.position
+
         msg = Twist()
-        x = self.forward_distance - 0.3
-        x = x if x < 0.1 else 0.1
-        x = x if x >= 0 else 0.0
-        msg.linear.x = x
-        self.publisher.publish(msg)
+
         angle = 0
-        self.publish_marker((0,0), angle, relative=True)
+        if VelocityController._calculate_distance(self.previous_position, self.position) > 0.01:
+            angle = VelocityController._calculate_angle(self.previous_position, self.position)
+            self.previous_position = self.position
+
+        goal_distance = VelocityController._calculate_distance(self.position, self.goal)
+
+        goal_angle = VelocityController._calculate_angle(self.position, self.goal)
+
+        turn_angle = ((goal_angle - angle + 180) % 360) - 180
+
+        distance = self.forward_distance - 0.3
+
+        if (distance > 0.3):
+            msg.linear.x = 0.075
+            if abs(turn_angle) >= 10:
+                if (turn_angle < 0):
+                    msg.angular.z = 0.3
+                elif (turn_angle > 0):
+                    msg.angular.z = -0.3
+        elif (goal_distance >= 0.3):
+            msg.angular.z = 0.1
+
+        self.publisher.publish(msg)
+        self.publish_marker(self.position, angle, relative=True)
     
     def goal_cb(self, msg):
         goal = msg.pose.position.x, msg.pose.position.y
@@ -37,7 +84,14 @@ class VelocityController(Node):
             self.goal = goal
     
     def laser_cb(self, msg):
-        self.forward_distance = msg.ranges[0]
+        forward_distance = msg.ranges[0]
+
+        num_ranges = 31
+        for i in range(num_ranges):
+            j = i - (num_ranges // 2)
+            forward_distance = min(forward_distance, msg.ranges[j])
+        
+        self.forward_distance = forward_distance
         
     def position_cb(self, msg):
         self.position = msg.point.x, msg.point.y
