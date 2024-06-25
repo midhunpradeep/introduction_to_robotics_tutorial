@@ -1,4 +1,5 @@
 import math
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -55,16 +56,16 @@ class VelocityController(Node):
     def timer_cb(self):
         if not self.position or not self.goal:
             return
-    
+        
         if not self.previous_position:
             self.previous_position = self.position
 
         msg = Twist()
 
         position_distance = VelocityController._calculate_distance(self.previous_position, self.position)
-        if (position_distance > 0):
+        if (position_distance > 0.01):
             self.angle = VelocityController._calculate_angle(self.previous_position, self.position)
-        self.previous_position = self.position
+            self.previous_position = self.position
 
         goal_angle = VelocityController._calculate_angle(self.position, self.goal)
 
@@ -72,13 +73,14 @@ class VelocityController(Node):
 
         distance = self.forward_distance - 0.3
 
-        if (distance > 0.3):
-            msg.linear.x = max((math.pi + turn_angle) / (2 * math.pi), 0.01) * 0.075
-            if position_distance > 0:
-                msg.linear.x = 0.01
-                if (turn_angle > 0):
+        if distance > 0.3:
+            velocity_factor = 1 - VelocityController._clamp(abs(turn_angle) / (math.pi / 2), 0, 0.75)
+            # self.get_logger().info(f'{velocity_factor=}')
+            msg.linear.x = velocity_factor * 0.075
+            if (position_distance > 0.01):
+                if turn_angle > 0:
                     msg.angular.z = 0.99
-                elif (turn_angle < 0):
+                elif turn_angle < 0:
                     msg.angular.z = -0.99
         else:
             msg.angular.z = 0.1
