@@ -21,6 +21,7 @@ class VelocityController(Node):
         self.create_subscription(PointStamped, 'position', self.position_cb, 10)
         self.pose_publisher = self.create_publisher(PoseStamped, 'pose_marker', 10)
         self.create_timer(0.1, self.timer_cb)
+        self.angle = 0
         self.get_logger().info('controller node started')
     
     @staticmethod
@@ -32,50 +33,58 @@ class VelocityController(Node):
     
     @staticmethod
     def _calculate_angle(point1, point2):
-        angle = 90 - math.degrees(math.atan2(
+        return math.atan2(
                 point2[1] - point1[1], 
                 point2[0] - point1[0]
-            ))
-        if (angle < 0):
-            angle += 360
-        return angle
+            )
+
+    @staticmethod
+    def _clamp(x, min_val, max_val):
+        return max(min_val, min(x, max_val))
+    
+    @staticmethod
+    def _angle_diff(a, b):
+        diff = a - b
+        while diff > math.pi:
+            diff -= 2 * math.pi
+        while diff < -math.pi:
+            diff += 2 * math.pi
+        return diff
+
         
     def timer_cb(self):
         if not self.position or not self.goal:
             return
-        
-        self.get_logger().info(f"posttion = {self.position}, goal = {self.goal}")
     
         if not self.previous_position:
             self.previous_position = self.position
 
         msg = Twist()
 
-        angle = 0
-        if VelocityController._calculate_distance(self.previous_position, self.position) > 0.01:
-            angle = VelocityController._calculate_angle(self.previous_position, self.position)
-            self.previous_position = self.position
-
-        goal_distance = VelocityController._calculate_distance(self.position, self.goal)
+        position_distance = VelocityController._calculate_distance(self.previous_position, self.position)
+        if (position_distance > 0):
+            self.angle = VelocityController._calculate_angle(self.previous_position, self.position)
+        self.previous_position = self.position
 
         goal_angle = VelocityController._calculate_angle(self.position, self.goal)
 
-        turn_angle = ((goal_angle - angle + 180) % 360) - 180
+        turn_angle = VelocityController._angle_diff(goal_angle, self.angle)
 
         distance = self.forward_distance - 0.3
 
         if (distance > 0.3):
-            msg.linear.x = 0.075
-            if abs(turn_angle) >= 10:
-                if (turn_angle < 0):
-                    msg.angular.z = 0.3
-                elif (turn_angle > 0):
-                    msg.angular.z = -0.3
-        elif (goal_distance >= 0.3):
+            msg.linear.x = max((math.pi + turn_angle) / (2 * math.pi), 0.01) * 0.075
+            if position_distance > 0:
+                msg.linear.x = 0.01
+                if (turn_angle > 0):
+                    msg.angular.z = 0.99
+                elif (turn_angle < 0):
+                    msg.angular.z = -0.99
+        else:
             msg.angular.z = 0.1
 
         self.publisher.publish(msg)
-        self.publish_marker(self.position, angle, relative=True)
+        self.publish_marker((self.position[0], self.position[1]), self.angle, relative=False)
     
     def goal_cb(self, msg):
         goal = msg.pose.position.x, msg.pose.position.y
